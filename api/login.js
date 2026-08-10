@@ -1,32 +1,38 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { getSupabase, json, error } = require('./_helpers');
+const { supabaseQuery, json, error, JWT_SECRET } = require('./_helpers');
 
 module.exports = async (req, res) => {
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.status(200).end();
+  }
   if (req.method !== 'POST') return error(res, 'Method not allowed', 405);
 
   const { username, password } = req.body || {};
   if (!username || !password) return error(res, '用户名和密码不能为空');
 
   try {
-    const supabase = getSupabase();
+    const users = await supabaseQuery(
+      `/users?username=eq.${encodeURIComponent(username)}&select=id,username,password`,
+      { method: 'GET' }
+    );
 
-    const { data: user, error: dbError } = await supabase
-      .from('users')
-      .select('id, username, password')
-      .eq('username', username)
-      .single();
+    if (!users || users.length === 0) {
+      return error(res, '用户名或密码错误', 401);
+    }
 
-    if (dbError || !user) return error(res, '用户名或密码错误', 401);
-
+    const user = users[0];
     if (!bcrypt.compareSync(password, user.password)) {
       return error(res, '用户名或密码错误', 401);
     }
 
     const token = jwt.sign(
       { userId: user.id, username: user.username },
-      process.env.JWT_SECRET || 'learning_notes_secret_2026',
+      JWT_SECRET,
       { expiresIn: '30d' }
     );
 
