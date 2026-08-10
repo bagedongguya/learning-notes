@@ -1,28 +1,27 @@
-const { getSupabase, json, error, authRequired } = require('./_helpers');
+const { supabaseQuery, json, error, authRequired } = require('./_helpers');
 
-// DELETE /api/notes/[id] - delete a note
-// PUT /api/notes/[id] - update a note
 module.exports = async (req, res) => {
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.status(200).end();
+  }
 
-  const user = authRequired(req, res);
+  const user = await authRequired(req, res);
   if (!user) return;
 
-  // Vercel provides the id in req.query
+  // Vercel dynamic route: api/notes/[id].js → req.query.id
   const id = req.query.id;
   if (!id) return error(res, '缺少笔记ID');
 
   try {
-    const supabase = getSupabase();
-
     if (req.method === 'DELETE') {
-      const { error: dbError } = await supabase
-        .from('notes')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.userId);
-
-      if (dbError) return error(res, dbError.message, 500);
+      await supabaseQuery(`/notes?id=eq.${encodeURIComponent(id)}&user_id=eq.${user.userId}`, {
+        method: 'DELETE',
+        prefer: 'return=representation',
+      });
       return json(res, { success: true });
     }
 
@@ -31,28 +30,30 @@ module.exports = async (req, res) => {
       const tagsJson = JSON.stringify(tags || []);
       const wordCount = (content || '').length;
 
-      const { data: existing, error: checkError } = await supabase
-        .from('notes')
-        .select('id')
-        .eq('id', id)
-        .eq('user_id', user.userId)
-        .single();
+      // Check if note exists and belongs to user
+      const existing = await supabaseQuery(
+        `/notes?id=eq.${encodeURIComponent(id)}&user_id=eq.${user.userId}&select=id,title`,
+        { method: 'GET' }
+      );
 
-      if (!existing) return error(res, '笔记不存在', 404);
+      if (!existing || existing.length === 0) {
+        return error(res, '笔记不存在', 404);
+      }
 
-      const { error: dbError } = await supabase
-        .from('notes')
-        .update({
-          title: title || existing.title,
-          content: content || '',
-          tags: tagsJson,
-          updated_at: updatedAt || new Date().toISOString(),
-          word_count: wordCount,
-        })
-        .eq('id', id)
-        .eq('user_id', user.userId);
+      await supabaseQuery(
+        `/notes?id=eq.${encodeURIComponent(id)}&user_id=eq.${user.userId}`,
+        {
+          method: 'PATCH',
+          body: {
+            title: title || existing[0].title,
+            content: content || '',
+            tags: tagsJson,
+            updated_at: updatedAt || new Date().toISOString(),
+            word_count: wordCount,
+          },
+        }
+      );
 
-      if (dbError) return error(res, dbError.message, 500);
       return json(res, { success: true });
     }
 
