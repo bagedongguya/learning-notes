@@ -1,23 +1,23 @@
-const { getSupabase, json, error, authRequired } = require('./_helpers');
+const { supabaseQuery, json, error, authRequired } = require('./_helpers');
 
-// GET /api/notes - list all notes for current user
 module.exports = async (req, res) => {
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.status(200).end();
+  }
 
-  const user = authRequired(req, res);
+  const user = await authRequired(req, res);
   if (!user) return;
 
   try {
-    const supabase = getSupabase();
-
     if (req.method === 'GET') {
-      const { data, error: dbError } = await supabase
-        .from('notes')
-        .select('*')
-        .eq('user_id', user.userId)
-        .order('updated_at', { ascending: false });
-
-      if (dbError) return error(res, dbError.message, 500);
+      const data = await supabaseQuery(
+        `/notes?user_id=eq.${user.userId}&order=updated_at.desc&select=*`,
+        { method: 'GET' }
+      );
 
       const parsed = (data || []).map(n => ({
         ...n,
@@ -34,9 +34,10 @@ module.exports = async (req, res) => {
       const tagsJson = JSON.stringify(tags || []);
       const wordCount = (content || '').length;
 
-      const { error: dbError } = await supabase
-        .from('notes')
-        .upsert({
+      // Use upsert via PATCH with Prefer: resolution=merge-duplicates
+      await supabaseQuery('/notes', {
+        method: 'POST',
+        body: {
           id,
           user_id: user.userId,
           title,
@@ -45,9 +46,9 @@ module.exports = async (req, res) => {
           created_at: createdAt || new Date().toISOString(),
           updated_at: updatedAt || new Date().toISOString(),
           word_count: wordCount,
-        });
-
-      if (dbError) return error(res, dbError.message, 500);
+        },
+        prefer: 'resolution=merge-duplicates',
+      });
 
       return json(res, { success: true });
     }
