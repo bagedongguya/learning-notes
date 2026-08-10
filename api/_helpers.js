@@ -1,14 +1,44 @@
-const { createClient } = require('@supabase/supabase-js');
-
 const JWT_SECRET = process.env.JWT_SECRET || 'learning_notes_secret_2026';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-function getSupabase() {
+function checkConfig() {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
-    throw new Error('Supabase not configured');
+    throw new Error('Supabase not configured. Set SUPABASE_URL and SUPABASE_KEY in Vercel env vars.');
   }
-  return createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+
+// Use Node.js built-in fetch (available since Node 18) to call Supabase REST API
+async function supabaseQuery(path, options = {}) {
+  checkConfig();
+  const url = `${SUPABASE_URL}/rest/v1${path}`;
+
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    'Prefer': options.prefer || 'return=representation',
+  };
+
+  const fetchOptions = {
+    method: options.method || 'GET',
+    headers,
+  };
+
+  if (options.body) {
+    fetchOptions.body = JSON.stringify(options.body);
+  }
+
+  const response = await fetch(url, fetchOptions);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Supabase error ${response.status}: ${errorText}`);
+  }
+
+  // Some endpoints return empty body (DELETE)
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
 }
 
 function corsHeaders() {
@@ -28,7 +58,7 @@ function error(res, message, status = 400) {
 }
 
 // Verify JWT and return user info
-function verifyToken(req) {
+async function verifyToken(req) {
   const auth = req.headers.authorization || '';
   const token = auth.replace('Bearer ', '');
   if (!token) return null;
@@ -41,8 +71,8 @@ function verifyToken(req) {
   }
 }
 
-function authRequired(req, res) {
-  const user = verifyToken(req);
+async function authRequired(req, res) {
+  const user = await verifyToken(req);
   if (!user) {
     error(res, '未登录或登录已过期', 401);
     return null;
@@ -50,4 +80,4 @@ function authRequired(req, res) {
   return user;
 }
 
-module.exports = { getSupabase, corsHeaders, json, error, verifyToken, authRequired, JWT_SECRET };
+module.exports = { supabaseQuery, corsHeaders, json, error, verifyToken, authRequired, JWT_SECRET };
